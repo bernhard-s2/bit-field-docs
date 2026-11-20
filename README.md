@@ -1,6 +1,6 @@
 # bit-field-docs
 
-🇩🇪 **Deutsche Beschreibung:** [bit-field-docs auf bit-field.de](https://linux.bit-field.de/...)
+🇩🇪 **Deutsche Beschreibung:** [bit-field-docs auf bit-field.de](https://linux.bit-field.de/bit-field-docs.de.html)
  
 **Document management with OCR, automatic classification and search.**
 
