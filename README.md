@@ -1,5 +1,7 @@
 # bit-field-docs
 
+🇩🇪 **Deutsche Beschreibung:** [bit-field-docs auf bit-field.de](https://linux.bit-field.de/...)
+ 
 **Document management with OCR, automatic classification and search.**
 
 bit-field-docs helps you collect, process and organize documents from different sources. It supports scanned images as well as existing PDF files, extracts text using OCR where necessary, assigns labels and makes documents searchable.
