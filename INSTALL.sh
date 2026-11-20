@@ -1,167 +1,296 @@
 #!/bin/bash
-# Scan Organizer – Vollständige Installationsroutine
-# Aufruf: ./INSTALL.sh [--local] [--zip PATH_ZUM_ZIP]
 
-# Farbcodes für Ausgabe
+# bit-field-docs – Installation
+# Projektverzeichnis: ~/bit-field-docs
+# Python-Umgebung: ~/.venvs/bit-field-docs
+
+set -e
+
+# --------------------------------------------------
+# Konfiguration
+# --------------------------------------------------
+
+PROJECT_DIR="$HOME/bit-field-docs"
+VENV_DIR="$HOME/.venvs/bit-field-docs"
+
+ARCHIVE_NAME="scan_organizer_cli.tar.gz"
+ARCHIVE_URL="https://linux.bit-field.de/downloads/$ARCHIVE_NAME"
+
+# --------------------------------------------------
+# Farben
+# --------------------------------------------------
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Standard-ZIP-URL (falls nicht lokal)
-DEFAULT_ZIP_URL="https://linux.bit-field.de/downloads/scan_organizer_cli.tar.gz"
+# --------------------------------------------------
+# Argumente
+# --------------------------------------------------
 
-# Argument-Parsing
 LOCAL=false
-ZIP_PATH=""
+ARCHIVE=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --local)
             LOCAL=true
             shift
             ;;
-        --zip)
-            ZIP_PATH="$2"
+        --zip|--archive)
+            if [[ -z "${2:-}" ]]; then
+                echo "Fehler: Pfad zum Archiv fehlt."
+                exit 1
+            fi
+            ARCHIVE="$(realpath "$2")"
             shift 2
             ;;
+        -h|--help)
+            echo "Verwendung:"
+            echo "  ./INSTALL.sh"
+            echo "  ./INSTALL.sh --local"
+            echo "  ./INSTALL.sh --archive DATEI"
+            exit 0
+            ;;
         *)
-            echo -e "${RED}Unbekanntes Argument: $1${NC}"
+            echo "Unbekanntes Argument: $1"
             exit 1
             ;;
     esac
 done
 
-# Abbruch bei Fehlern
-set -e
+# --------------------------------------------------
+# Nicht als root starten
+# --------------------------------------------------
 
-# 1. Prüfe, ob als root ausgeführt wird (für Systempakete)
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}Warnung: Einige Pakete erfordern root-Rechte.${NC}"
-    echo -e "${YELLOW}Passwort für sudo wird später abgefragt.${NC}"
+if [[ $EUID -eq 0 ]]; then
+    echo -e "${RED}Bitte INSTALL.sh nicht mit sudo starten.${NC}"
+    echo "Das Skript verwendet sudo nur für die Systempakete."
+    exit 1
 fi
 
-# 2. Systempakete installieren (inkl. Abhängigkeiten für Tesseract, Scanner UND Pillow)
-echo -e "${GREEN}==> Installiere Systempakete...${NC}"
-sudo apt update
-sudo apt install -y \
-    tesseract-ocr \
-    tesseract-ocr-deu \
-    tesseract-ocr-eng \
-    libsane1 \
-    sane \
-    sane-utils \
+# --------------------------------------------------
+# Vorhandene Installation prüfen
+# --------------------------------------------------
+
+if [[ -d "$PROJECT_DIR" ]] &&
+   [[ -n "$(ls -A "$PROJECT_DIR" 2>/dev/null)" ]]; then
+
+    echo -e "${YELLOW}Das Projektverzeichnis existiert bereits:${NC}"
+    echo "$PROJECT_DIR"
+    echo
+    echo "Die Installation kann vorhandene Programmdateien überschreiben."
+    read -r -p "Trotzdem fortfahren? (j/N) " answer
+
+    if [[ ! "$answer" =~ ^[jJyY]$ ]]; then
+        echo "Installation abgebrochen."
+        exit 0
+    fi
+fi
+
+# --------------------------------------------------
+# Systempakete installieren
+# --------------------------------------------------
+
+echo
+echo -e "${GREEN}Installiere Systempakete ...${NC}"
+
+sudo apt-get update
+
+sudo apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    unzip \
     python3-dev \
-    libjpeg-dev \
-    zlib1g-dev \
-    libtiff-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libwebp-dev \
-    libharfbuzz-dev \
-    libfribidi-dev \
-    libimagequant-dev \
+    wget \
+    ca-certificates \
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
+    tesseract-ocr-osd \
+    ocrmypdf \
+    poppler-utils \
+    libsane1 \
+    sane-utils \
     sqlite3
 
-# 3. Projektverzeichnis erstellen
-PROJECT_DIR="$HOME/scan_organizer2"
-echo -e "${GREEN}==> Erstelle Projektverzeichnis: $PROJECT_DIR${NC}"
-mkdir -p "$PROJECT_DIR"
-cd "$PROJECT_DIR"
+# --------------------------------------------------
+# Archiv bereitstellen
+# --------------------------------------------------
 
-# 4. ZIP-Archiv herunterladen oder lokal nutzen
-if [ -n "$ZIP_PATH" ]; then
-    # Benutzerdefiniertes ZIP
-    echo -e "${GREEN}==> Verwende benutzerdefiniertes ZIP: $ZIP_PATH${NC}"
-    cp "$ZIP_PATH" "$PROJECT_DIR/scan_organizer_cli.tar.gz"
-elif [ "$LOCAL" = true ]; then
-    # Lokales ZIP (wenn --local angegeben)
-    echo -e "${GREEN}==> Verwende lokales ZIP-Archiv${NC}"
-    if [ ! -f "$PROJECT_DIR/scan_organizer_cli.tar.gz" ]; then
-        echo -e "${RED}Fehler: Lokales ZIP-Archiv nicht gefunden!${NC}"
+echo
+echo -e "${GREEN}Bereite Projektarchiv vor ...${NC}"
+
+if [[ -n "$ARCHIVE" ]]; then
+
+    if [[ ! -f "$ARCHIVE" ]]; then
+        echo -e "${RED}Archiv nicht gefunden: $ARCHIVE${NC}"
         exit 1
     fi
-else
-    # Standard-ZIP herunterladen
-    echo -e "${GREEN}==> Lade Scan Organizer herunter...${NC}"
-    wget -q "$DEFAULT_ZIP_URL" -O "$PROJECT_DIR/scan_organizer_cli.tar.gz" || {
-        echo -e "${RED}Fehler: Download fehlgeschlagen.${NC}"
-        echo -e "${YELLOW}Versuche, das ZIP manuell herunterzuladen und mit --zip anzugeben.${NC}"
+
+elif [[ "$LOCAL" == true ]]; then
+
+    ARCHIVE="$HOME/$ARCHIVE_NAME"
+
+    if [[ ! -f "$ARCHIVE" ]]; then
+        echo -e "${RED}Lokales Archiv nicht gefunden:${NC}"
+        echo "$ARCHIVE"
         exit 1
-    }
-fi
+    fi
 
-# 5. ZIP-Archiv entpacken
-# Neues (sicherer, mit Überprüfung):
-if [ -f "$PROJECT_DIR/scan_organizer_cli.tar.gz" ]; then
-    echo -e "${GREEN}==> Entpacke Dateien...${NC}"
-    # Erstelle einen temporären Ordner fürs Entpacken
-    cd "$PROJECT_DIR"
-    tar xvzf "$PROJECT_DIR/scan_organizer_cli.tar.gz"  
-    cd 
-    # Verschiebe die Dateien in PROJECT_DIR (ohne temp_zip)
-    #rm "$PROJECT_DIR/scan_organizer_cli.tar.gz"
 else
-    echo -e "${RED}Fehler: ZIP-Archiv nicht gefunden!${NC}"
-    exit 1
+
+    ARCHIVE="$(mktemp)"
+
+    echo "Lade Projektarchiv herunter ..."
+
+    wget -O "$ARCHIVE" "$ARCHIVE_URL"
+
 fi
 
-# 6. Virtuelle Umgebung einrichten
-echo -e "${GREEN}==> Richte Python-Umgebung ein...${NC}"
-python3 -m venv venv
-source ~/venv/bin/activate
+# --------------------------------------------------
+# Archiv entpacken
+# --------------------------------------------------
 
-# 7. Python-Pakete installieren
-echo -e "${GREEN}==> Installiere Python-Pakete...${NC}"
-pip install --upgrade pip
-pip install Pillow>=10.0.0 numpy>=1.26.0 pytesseract>=0.3.10 opencv-python>=4.8.0
+TEMP_DIR="$(mktemp -d)"
 
-# 8. Tesseract prüfen
-echo -e "${GREEN}==> Prüfe Tesseract-Installation...${NC}"
-if ! command -v tesseract &> /dev/null; then
-    echo -e "${RED}Fehler: Tesseract nicht gefunden!${NC}"
-    echo -e "${YELLOW}Versuche, es manuell zu installieren: sudo apt install tesseract-ocr${NC}"
-    exit 1
+cleanup() {
+    rm -rf "$TEMP_DIR"
+
+    if [[ -n "$ARCHIVE" ]] &&
+       [[ "$ARCHIVE" == /tmp/* ]]; then
+        rm -f "$ARCHIVE"
+    fi
+}
+
+trap cleanup EXIT
+
+echo
+echo "Prüfe Archiv ..."
+
+tar -tzf "$ARCHIVE" >/dev/null
+
+tar -xzf "$ARCHIVE" -C "$TEMP_DIR"
+
+SOURCE_DIR="$TEMP_DIR"
+
+# Prüfen, ob das Programm direkt im Archiv liegt
+if [[ ! -f "$SOURCE_DIR/scan_organizer.py" ]]; then
+
+    # Eventuell liegt alles in einem Unterverzeichnis
+    FOUND="$(find "$TEMP_DIR" -mindepth 2 -name scan_organizer.py -print -quit)"
+
+    if [[ -z "$FOUND" ]]; then
+        echo -e "${RED}scan_organizer.py wurde im Archiv nicht gefunden.${NC}"
+        exit 1
+    fi
+
+    SOURCE_DIR="$(dirname "$FOUND")"
 fi
-tesseract --version
 
-# 9. Scanner prüfen
-echo -e "${GREEN}==> Prüfe Scanner...${NC}"
-if ! command -v scanimage &> /dev/null; then
-    echo -e "${RED}Fehler: scanimage (SANE) nicht gefunden!${NC}"
-    echo -e "${YELLOW}Versuche, es manuell zu installieren: sudo apt install libsane sane-utils${NC}"
-    exit 1
-fi
-echo -e "Verfügbare Scanner:"
-scanimage -L || echo -e "${YELLOW}Kein Scanner gefunden.${NC}"
+# --------------------------------------------------
+# Projektdateien installieren
+# --------------------------------------------------
 
-# 10. pytesseract-Pfad anpassen (falls nötig)
-##echo -e "${GREEN}==> Konfiguriere pytesseract...${NC}"
-##TESSERACT_PATH=$(which tesseract)
-##if [ -n "$TESSERACT_PATH" ]; then
-##    echo "pytesseract.pytesseract.tesseract_cmd = '$TESSERACT_PATH'" > venv/lib/python3.*/site-packages/pytesseract/__init__.py
-##    echo -e "Tesseract-Pfad gesetzt auf: $TESSERACT_PATH"
-##fi
+echo
+echo -e "${GREEN}Installiere Projektdateien ...${NC}"
 
-# 11. scan_organizer.py ausführbar machen
-echo -e "${GREEN}==> Setze Berechtigungen...${NC}"
+mkdir -p "$PROJECT_DIR"
+
+cp -a "$SOURCE_DIR/." "$PROJECT_DIR/"
+
 chmod +x "$PROJECT_DIR/scan_organizer.py"
 
-# 12. Erfolgsmeldung
-echo -e "${GREEN}"
-echo "=========================================="
-echo "Installation abgeschlossen!"
-echo "=========================================="
-echo "1. Wechsle in das Projektverzeichnis:"
-echo "   cd $PROJECT_DIR"
-echo "2. Aktiviere die virtuelle Umgebung:"
-echo "   source ~/venv/bin/activate"
-echo "3. Starte den Scan Organizer:"
-echo "   ./scan_organizer.py file ~/scans/test.jpg --label \"Test\""
-echo "=========================================="
-echo -e "${NC}"
+# --------------------------------------------------
+# Python-Umgebung einrichten
+# --------------------------------------------------
 
+echo
+echo -e "${GREEN}Richte Python-Umgebung ein ...${NC}"
+
+mkdir -p "$HOME/.venvs"
+
+if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+    python3 -m venv "$VENV_DIR"
+fi
+
+source "$VENV_DIR/bin/activate"
+
+python -m pip install --upgrade pip
+
+# --------------------------------------------------
+# Python-Abhängigkeiten installieren
+# --------------------------------------------------
+
+echo
+echo -e "${GREEN}Installiere Python-Pakete ...${NC}"
+
+if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
+
+    pip install -r "$PROJECT_DIR/requirements.txt"
+
+else
+
+    echo -e "${RED}requirements.txt fehlt!${NC}"
+    exit 1
+
+fi
+
+# --------------------------------------------------
+# Installation überprüfen
+# --------------------------------------------------
+
+echo
+echo -e "${GREEN}Überprüfe Installation ...${NC}"
+
+echo
+echo "Python:"
+python --version
+
+echo
+echo "Tesseract:"
+tesseract --version | head -n 1
+
+echo
+echo "OCRmyPDF:"
+ocrmypdf --version
+
+echo
+echo "Poppler:"
+pdftotext -v 2>&1 | head -n 1
+
+echo
+echo "Scanner:"
+if command -v scanimage >/dev/null 2>&1; then
+    scanimage -L || true
+else
+    echo "scanimage nicht gefunden."
+fi
+
+# --------------------------------------------------
+# Abschluss
+# --------------------------------------------------
+
+echo
+echo -e "${GREEN}Installation erfolgreich abgeschlossen!${NC}"
+
+echo
+echo "Projektverzeichnis:"
+echo "  $PROJECT_DIR"
+
+echo
+echo "Python-Umgebung:"
+echo "  $VENV_DIR"
+
+echo
+echo "Umgebung aktivieren mit:"
+echo "  source $VENV_DIR/bin/activate"
+
+echo
+echo "Programm starten mit:"
+echo "  cd $PROJECT_DIR"
+echo "  ./scan_organizer.py --help"
+
+echo
 
